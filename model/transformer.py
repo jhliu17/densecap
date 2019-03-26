@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, './tools/densevid_eval/coco-caption') # Hack to allow the import of pycocoeval
 from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 from pycocoevalcap.meteor.meteor import Meteor
-
+from .top_down import GatedTanhLayer, StepTopDownAttention
 # import contexts
 
 INF = 1e10
@@ -316,6 +316,130 @@ class Transformer(nn.Module):
 
 
 class RealTransformer(nn.Module):
+
+    def __init__(self, d_model, encoder, vocab_trg, d_hidden=2048,
+                 n_layers=6, n_heads=8, drop_ratio=0.1):
+        super().__init__()
+        # self.encoder = Encoder(d_model, d_hidden, n_vocab_src, n_layers,
+        #                        n_heads, drop_ratio)
+        self.encoder = encoder
+        self.decoder = Decoder(d_model, d_hidden, vocab_trg, n_layers,
+                              n_heads, drop_ratio)
+        self.n_layers = n_layers
+        self.tokenizer = PTBTokenizer()
+
+    def denum(self, data):
+        return ' '.join(self.decoder.vocab.itos[i] for i in data).replace(
+            ' <eos>', '').replace(' <pad>', '').replace(' .', '').replace('  ', '')
+
+    def forward(self, x, s, x_mask=None, sample_prob=0):
+        encoding = self.encoder(x, x_mask)
+
+        max_sent_len = 20
+        if not self.training:
+            if isinstance(s, list):
+                hiddens, _ = self.decoder.greedy(encoding, max_sent_len)
+                h = hiddens[-1]
+                targets = None
+            else:
+                h = self.decoder(s[:, :-1].contiguous(), encoding)
+                targets, h = mask(s[:, 1:].contiguous(), h)
+            logits = self.decoder.out(h)
+        else:
+            if sample_prob == 0:
+                h = self.decoder(s[:, :-1].contiguous(), encoding)
+                targets, h = mask(s[:, 1:].contiguous(), h)
+                logits = self.decoder.out(h)
+            else:
+                model_pred = self.decoder.sampling(encoding, s,
+                                                   s.size(1) - 2,
+                                                   sample_prob,
+                                                   is_argmax=True)
+                model_pred.detach_()
+                new_y = torch.cat((
+                    Variable(model_pred.data.new(s.size(0), 1).long().fill_(
+                        self.decoder.vocab.stoi['<init>'])),
+                    model_pred), 1)
+                h = self.decoder(new_y, encoding)
+                targets, h = mask(s[:, 1:].contiguous(), h)
+                logits = self.decoder.out(h)
+
+        return logits, targets
+
+    def greedy(self, x, x_mask, T):
+        encoding = self.encoder(x, x_mask)
+
+        _, pred = self.decoder.greedy(encoding, T)
+        sent_lst = []
+        for i in range(pred.data.size(0)):
+            sent_lst.append(self.denum(pred.data[i]))
+        return sent_lst
+
+    def scst(self, x, x_mask, s):
+        self.scorer = Meteor()
+        encoding = self.encoder(x, x_mask)
+
+        # greedy part
+        _, pred = self.decoder.greedy(encoding, s.size(1)-1)
+        pred_greedy = []
+        for i in range(pred.data.size(0)):
+            pred_greedy.append(self.denum(pred.data[i]))
+
+        del pred
+        # sampling part
+        model_pred = self.decoder.sampling(encoding, s,
+                                           s.size(1) - 2,
+                                           sample_prob=1,
+                                           is_argmax=False)
+        model_pred.detach_()
+        new_y = torch.cat((
+            Variable(model_pred.data.new(s.size(0), 1).long().fill_(
+                self.decoder.vocab.stoi['<init>'])),
+            model_pred), 1)
+        h = self.decoder(new_y, encoding)
+        B, T, H = h.size()
+        logits = self.decoder.out(h.view(-1, H)) #.view(B, T, -1)
+
+        mask = (s[:,1:] != 1).float()
+        _, pred_sample = torch.max(logits, -1)
+
+        p_model = F.log_softmax(logits, dim=-1)
+        logp = p_model[torch.arange(0,B*T).type(logits.data.type()).long(), pred_sample.data].view(B, T)
+
+        pred_sample = pred_sample.view(B, T)
+
+        assert pred_sample.size(0) == len(pred_greedy), (
+            'pred_sample should have the same number of sentences as in '
+            'pred_greedy, got {} and {} instead'.format(B, len(pred_greedy))
+        )
+        assert pred_sample.size() == (B, T), (
+            'pred_sample size should error'
+        )
+
+        pred_sample.detach_()
+
+        # rewards
+        sentence_greedy, sentence_sample, sentence_gt = {}, {}, {}
+        for i in range(len(pred_greedy)):
+            sentence_greedy[i] = [{'caption':pred_greedy[i]}]
+            sentence_sample[i] = [{'caption':self.denum(pred_sample.data[i])}]
+            sentence_gt[i] = [{'caption':self.denum(s.data[i,1:])}]
+
+        tok_greedy = self.tokenizer.tokenize(sentence_greedy)
+        tok_sample = self.tokenizer.tokenize(sentence_sample)
+        tok_gt = self.tokenizer.tokenize(sentence_gt)
+        _, r_greedy = self.scorer.compute_score(tok_gt, tok_greedy)
+        _, r_sample = self.scorer.compute_score(tok_gt, tok_sample)
+
+        r_diff = [r_s-r_g for (r_s, r_g) in zip(r_greedy, r_sample)]
+        r_diff = Variable(torch.Tensor(r_diff).type(logp.data.type()))
+
+        loss = - torch.mean(torch.sum(r_diff.view(-1,1) * logp * mask, 1))
+
+        return loss
+
+
+class RefineTransformer(nn.Module):
 
     def __init__(self, d_model, encoder, vocab_trg, d_hidden=2048,
                  n_layers=6, n_heads=8, drop_ratio=0.1):

@@ -350,14 +350,14 @@ class ActionPropDenseCap(nn.Module):
                 anchor_c = anchor_c.expand(B, 1, anchor_c.size(0))
                 anchor_l = Variable(torch.FloatTensor(anchor_c.size()).fill_(kernel_size).type(dtype))
 
-                pred_final = torch.cat((pred_o, anchor_l, anchor_c), 1)
+                pred_final = torch.cat((pred_o, anchor_l, anchor_c), 1) # pred_final [batch, 6, time_step]
                 prop_lst.append(pred_final)
             else:
                 print('skipping kernel sizes greater than {}'.format(
                     self.kernel_list[i]))
                 break
 
-        prop_all = torch.cat(prop_lst, 2)
+        prop_all = torch.cat(prop_lst, 2) # prop_all [batch, 6, all_time_step]
 
         # assume 1st and 2nd are action prediction and overlap, respectively
         prop_all[:,:2,:] = F.sigmoid(prop_all[:,:2,:])
@@ -402,13 +402,13 @@ class ActionPropDenseCap(nn.Module):
                     pred_end_w = crt_pred_cen[sel_idx[prop_idx]] + crt_pred_len[sel_idx[prop_idx]] / 2.0
                     pred_start = pred_start_w
                     pred_end = pred_end_w
-                    if pred_start >= pred_end:
+                    if pred_start >= pred_end: # if recongnitions have error then skip it
                         continue
                     if pred_end >= original_frame_len or pred_start < 0:
                         continue
 
                     hasoverlap = False
-                    if crt_nproposal > 0:
+                    if crt_nproposal > 0: # judge whether has been proposaled
                         if np.max(segment_iou(np.array([pred_start, pred_end]), pred_results[:crt_nproposal])) > nms_thresh:
                             hasoverlap = True
 
@@ -425,7 +425,7 @@ class ActionPropDenseCap(nn.Module):
                         pred_bin_window_mask[:, win_start:win_end] = 1
                         pred_masks.append(pred_bin_window_mask)
 
-                        if self.learn_mask:
+                        if self.learn_mask: # this procedure is preparing mask data for training 
                             # 4, 5 are the indices for anchor length and center
                             anc_len = crt_pred[4, sel_idx[prop_idx]]
                             anc_cen = crt_pred[5, sel_idx[prop_idx]]
@@ -433,7 +433,7 @@ class ActionPropDenseCap(nn.Module):
                             amask = torch.zeros(1,T).type(dtype)
                             amask[0,
                             max(0, math.floor(anc_cen - anc_len / 2.)):
-                            min(T, math.ceil(anc_cen + anc_len / 2.))] = 1.
+                            min(T, math.ceil(anc_cen + anc_len / 2.))] = 1. # binary mask in differentiable proposal mask
                             anchor_window_mask.append(amask)
 
                             pred_start_lst.append(torch.Tensor([pred_start_w]).type(dtype))
@@ -449,9 +449,10 @@ class ActionPropDenseCap(nn.Module):
 
                             gate_scores.append(torch.Tensor([crt_pred[0, sel_idx[prop_idx]]]).type(dtype))
 
+                        # win_start & end is the legal result in time 前面的pred_start and pred_end没有进行时间约束
                         pred_results[crt_nproposal] = np.array([win_start,
                                                                 win_end,
-                                                                crt_pred[0, sel_idx[prop_idx]]])
+                                                                crt_pred[0, sel_idx[prop_idx]]])  
                         crt_nproposal += 1
 
                     if crt_nproposal >= max_prop_num:

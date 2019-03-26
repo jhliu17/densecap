@@ -33,19 +33,19 @@ from data.utils import update_values
 parser = argparse.ArgumentParser()
 
 # Data input settings
-parser.add_argument('--cfgs_file', default='cfgs/anet.yml', type=str, help='dataset specific settings. anet | yc2')
-parser.add_argument('--dataset', default='', type=str, help='which dataset to use. two options: anet | yc2')
-parser.add_argument('--dataset_file', default='', type=str)
-parser.add_argument('--feature_root', default='', type=str, help='the feature root')
-parser.add_argument('--dur_file', default='', type=str)
+parser.add_argument('--cfgs_file', default='../cfgs/yc2.yml', type=str, help='dataset specific settings. anet | yc2')
+parser.add_argument('--dataset', default='yc2', type=str, help='which dataset to use. two options: anet | yc2')
+parser.add_argument('--dataset_file', default='..\data\yc2_annotations_trainval.json', type=str)
+parser.add_argument('--feature_root', default='....\dataset', type=str, help='the feature root')
+parser.add_argument('--dur_file', default='..\data\yc2_duration_frame.csv', type=str)
 parser.add_argument('--train_data_folder', default=['training'], type=str, nargs='+', help='training data folder')
 parser.add_argument('--val_data_folder', default=['validation'], help='validation data folder')
 parser.add_argument('--save_train_samplelist', action='store_true')
 parser.add_argument('--load_train_samplelist', action='store_true')
-parser.add_argument('--train_samplelist_path', type=str, default='/z/home/luozhou/subsystem/densecap_vid/train_samplelist.pkl')
+parser.add_argument('--train_samplelist_path', type=str, default='/data/jhliu/videocaptioning/dataset/training_sample_list/train_samplelist.pkl')
 parser.add_argument('--save_valid_samplelist', action='store_true')
 parser.add_argument('--load_valid_samplelist', action='store_true')
-parser.add_argument('--valid_samplelist_path', type=str, default='/z/home/luozhou/subsystem/densecap_vid/valid_samplelist.pkl')
+parser.add_argument('--valid_samplelist_path', type=str, default='/data/jhliu/videocaptioning/dataset/validation_sample_list/valid_samplelist.pkl')
 parser.add_argument('--start_from', default='', help='path to a model checkpoint to initialize model weights from. Empty = dont')
 parser.add_argument('--max_sentence_len', default=20, type=int)
 parser.add_argument('--num_workers', default=1, type=int)
@@ -107,16 +107,20 @@ parser.add_argument('--losses_log_every', default=1, type=int, help='How often d
 parser.add_argument('--seed', default=123, type=int, help='random number generator seed to use')
 parser.add_argument('--cuda', dest='cuda', action='store_true', help='use gpu')
 parser.add_argument('--enable_visdom', action='store_true', dest='enable_visdom')
+parser.add_argument('--cuda_id', default='0', type=str,  help='choose the cuda id')
 
 
 parser.set_defaults(cuda=False, save_train_samplelist=False,
-                    load_train_samplelist=False,
+                    load_train_samplelist=True,
                     save_valid_samplelist=False,
-                    load_valid_samplelist=False,
-                    gated_mask=False,
+                    load_valid_samplelist=True,
+                    gated_mask=True,
                     enable_visdom=False)
 
 args = parser.parse_args()
+
+if args.cuda:
+    args.cuda_id = 'cuda: ' + args.cuda_id
 
 with open(args.cfgs_file, 'r') as handle:
     options_yaml = yaml.load(handle)
@@ -217,10 +221,10 @@ def get_model(text_proc, args):
     # Ship the model to GPU, maybe
     if args.cuda:
         if args.distributed:
-            model.cuda()
+            model.cuda(args.cuda_id)
             model = torch.nn.parallel.DistributedDataParallel(model)
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            model = torch.nn.DataParallel(model, device_ids=[int(args.cuda_id[-1])]).cuda(args.cuda_id)
         # elif torch.cuda.device_count() > 1:
         #     model = torch.nn.DataParallel(model).cuda()
         # else:
@@ -297,7 +301,7 @@ def main(args):
         all_training_losses.append(epoch_loss)
 
         (valid_loss, val_cls_loss,
-         val_reg_loss, val_sent_loss, val_mask_loss) = valid(model, valid_loader)
+         val_reg_loss, val_sent_loss, val_mask_loss) = valid(model, valid_loader, args)
 
         all_eval_losses.append(valid_loss)
         all_cls_losses.append(val_cls_loss)
@@ -408,10 +412,10 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         sentence_batch = Variable(sentence_batch)
 
         if args.cuda:
-            img_batch = img_batch.cuda()
-            tempo_seg_neg = tempo_seg_neg.cuda()
-            tempo_seg_pos = tempo_seg_pos.cuda()
-            sentence_batch = sentence_batch.cuda()
+            img_batch = img_batch.cuda(args.cuda_id)
+            tempo_seg_neg = tempo_seg_neg.cuda(args.cuda_id)
+            tempo_seg_pos = tempo_seg_pos.cuda(args.cuda_id)
+            sentence_batch = sentence_batch.cuda(args.cuda_id)
 
         t_model_start = time.time()
         (pred_score, gt_score,
@@ -494,7 +498,7 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
 
 
 ### Validation ##
-def valid(model, loader):
+def valid(model, loader, args):
     model.eval()
     valid_loss = []
     val_cls_loss = []
@@ -510,10 +514,10 @@ def valid(model, loader):
             sentence_batch = Variable(sentence_batch)
 
             if args.cuda:
-                img_batch = img_batch.cuda()
-                tempo_seg_neg = tempo_seg_neg.cuda()
-                tempo_seg_pos = tempo_seg_pos.cuda()
-                sentence_batch = sentence_batch.cuda()
+                img_batch = img_batch.cuda(args.cuda_id)
+                tempo_seg_neg = tempo_seg_neg.cuda(args.cuda_id)
+                tempo_seg_pos = tempo_seg_pos.cuda(args.cuda_id)
+                sentence_batch = sentence_batch.cuda(args.cuda_id)
 
             (pred_score, gt_score,
              pred_offsets, gt_offsets,

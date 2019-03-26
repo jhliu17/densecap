@@ -18,6 +18,7 @@ from random import shuffle
 import torch
 import torchtext
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 from data.utils import segment_iou
 
@@ -88,8 +89,8 @@ class ANetDataset(Dataset):
                             train_sentences.append(ann['sentence'])
 
             train_sentences = list(map(text_proc.preprocess, train_sentences))
-            sentence_idx = text_proc.numericalize(text_proc.pad(train_sentences),
-                                                       device=-1)  # put in memory
+            sentence_idx = text_proc.numericalize(text_proc.pad(train_sentences), device='cpu: 0')  # put in memory
+            # print(sentence_idx.device)
             if sentence_idx.size(0) != len(train_sentences):
                 raise Exception("Error in numericalize sentences")
 
@@ -136,7 +137,7 @@ class ANetDataset(Dataset):
             neg_anchor_stats = []
             # load annotation per video and construct training set
             missing_prop = 0
-            with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+            with multiprocessing.Pool(4) as pool:
                 results = [None]*len(raw_data)
                 vid_idx = 0
                 for vid, val in raw_data.items():
@@ -149,8 +150,24 @@ class ANetDataset(Dataset):
                                           anc_cen_all, pos_thresh, neg_thresh))
                             vid_idx += 1
                 results = results[:vid_idx]
-                for i, r in enumerate(results):
+                for i, r in enumerate(tqdm(results)):
                     results[i] = r.get()
+            pool.close()
+            pool.join()
+
+            # I change the multiprocessing to single processing.
+            # results = [None]*len(raw_data)
+            # vid_idx = 0
+            # for vid, val in tqdm(raw_data.items()):
+            #     annotations = val['annotations']
+            #     for split_path in split_paths:
+            #         if val['subset'] in split and os.path.isfile(os.path.join(split_path, vid + '_bn.npy')):
+            #             results[vid_idx] = _get_pos_neg(split_path, annotations, vid,
+            #                           slide_window_size, frame_to_second[vid], anc_len_all,
+            #                           anc_cen_all, pos_thresh, neg_thresh)
+            #             vid_idx += 1
+            # results = results[:vid_idx]
+
 
             vid_counter = 0
             for r in results:
@@ -214,15 +231,24 @@ def _get_pos_neg(split_path, annotations, vid,
 
         # load feature
         # T x H
-        resnet_feat = torch.from_numpy(
-            np.load(video_prefix + '_resnet.npy')).float()
-        bn_feat = torch.from_numpy(
-            np.load(video_prefix + '_bn.npy')).float()
+        # as the multiprocessing cause error I change the method with numpy
 
-        if resnet_feat.size(0) != bn_feat.size(0):
+        # resnet_feat = torch.from_numpy(
+        #     np.load(video_prefix + '_resnet.npy')).float()
+        # bn_feat = torch.from_numpy(
+        #     np.load(video_prefix + '_bn.npy')).float()
+        # if resnet_feat.size(0) != bn_feat.size(0):
+        #     raise Exception(
+        #         'number of frames does not match in feature!')
+        # total_frame = bn_feat.size(0)
+
+        resnet_feat = np.load(video_prefix + '_resnet.npy')
+        bn_feat = np.load(video_prefix + '_bn.npy')
+        if resnet_feat.shape[0] != bn_feat.shape[0]:
             raise Exception(
                 'number of frames does not match in feature!')
-        total_frame = bn_feat.size(0)
+        total_frame = bn_feat.shape[0]
+
 
         window_start = 0
         window_end = slide_window_size
