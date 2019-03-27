@@ -471,7 +471,7 @@ class ActionPropDenseCap(nn.Module):
             pred_masks = Variable(torch.cat(pred_masks, 0))
             batch_x = x[b].unsqueeze(0).expand(pred_masks.size(0), x.size(1), x.size(2))
 
-            if self.learn_mask:
+            if self.learn_mask: # add position encoding 
                 pe_pred_start = torch.cat(pred_start_lst, 0)
                 pe_pred_end = torch.cat(pred_end_lst, 0)
                 pe_anchor_start = torch.cat(anchor_start_lst, 0)
@@ -484,7 +484,7 @@ class ActionPropDenseCap(nn.Module):
                 in_pred_mask = torch.cat((pos_encs[:npos//4], pos_encs[npos//4:npos//4*2],
                                           pos_encs[npos//4 * 2:npos//4 * 3],
                                           pos_encs[npos//4 * 3:npos//4 * 4],
-                                          anchor_window_mask), 1)
+                                          anchor_window_mask), 1) # pos_encos include different data along with the first dim 
                 pred_cont_masks  = self.mask_model(in_pred_mask).unsqueeze(2)
 
                 if gated_mask:

@@ -107,7 +107,7 @@ parser.add_argument('--losses_log_every', default=1, type=int, help='How often d
 parser.add_argument('--seed', default=123, type=int, help='random number generator seed to use')
 parser.add_argument('--cuda', dest='cuda', action='store_true', help='use gpu')
 parser.add_argument('--enable_visdom', action='store_true', dest='enable_visdom')
-parser.add_argument('--cuda_id', default='0', type=str,  help='choose the cuda id')
+parser.add_argument('--cuda_id', default='4', type=str,  help='choose the cuda id')
 
 
 parser.set_defaults(cuda=False, save_train_samplelist=False,
@@ -120,7 +120,11 @@ parser.set_defaults(cuda=False, save_train_samplelist=False,
 args = parser.parse_args()
 
 if args.cuda:
-    args.cuda_id = 'cuda: ' + args.cuda_id
+    ids = args.cuda_id.split(' ')
+    # args.cuda_id = ['cuda: ' + i for i in args.cuda_id]
+    os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(ids)
+    args.cuda_id = list(range(len(ids)))
+
 
 with open(args.cfgs_file, 'r') as handle:
     options_yaml = yaml.load(handle)
@@ -224,7 +228,9 @@ def get_model(text_proc, args):
             model.cuda(args.cuda_id)
             model = torch.nn.parallel.DistributedDataParallel(model)
         else:
-            model = torch.nn.DataParallel(model, device_ids=[int(args.cuda_id[-1])]).cuda(args.cuda_id)
+            model = torch.nn.DataParallel(model, device_ids=args.cuda_id).cuda()
+            # model = torch.nn.DataParallel(model, device_ids=args.cuda_id)
+            # model = model.cuda()
         # elif torch.cuda.device_count() > 1:
         #     model = torch.nn.DataParallel(model).cuda()
         # else:
@@ -412,10 +418,10 @@ def train(epoch, model, optimizer, train_loader, vis, vis_window, args):
         sentence_batch = Variable(sentence_batch)
 
         if args.cuda:
-            img_batch = img_batch.cuda(args.cuda_id)
-            tempo_seg_neg = tempo_seg_neg.cuda(args.cuda_id)
-            tempo_seg_pos = tempo_seg_pos.cuda(args.cuda_id)
-            sentence_batch = sentence_batch.cuda(args.cuda_id)
+            img_batch = img_batch.cuda()
+            tempo_seg_neg = tempo_seg_neg.cuda()
+            tempo_seg_pos = tempo_seg_pos.cuda()
+            sentence_batch = sentence_batch.cuda()
 
         t_model_start = time.time()
         (pred_score, gt_score,
@@ -514,10 +520,10 @@ def valid(model, loader, args):
             sentence_batch = Variable(sentence_batch)
 
             if args.cuda:
-                img_batch = img_batch.cuda(args.cuda_id)
-                tempo_seg_neg = tempo_seg_neg.cuda(args.cuda_id)
-                tempo_seg_pos = tempo_seg_pos.cuda(args.cuda_id)
-                sentence_batch = sentence_batch.cuda(args.cuda_id)
+                img_batch = img_batch.cuda()
+                tempo_seg_neg = tempo_seg_neg.cuda()
+                tempo_seg_pos = tempo_seg_pos.cuda()
+                sentence_batch = sentence_batch.cuda()
 
             (pred_score, gt_score,
              pred_offsets, gt_offsets,

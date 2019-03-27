@@ -67,7 +67,7 @@ class StepTopDownAttention(nn.Module):
         else:
             attention = F.softmax(score, dim=-1)
         # attention -> [batch, 1, n_keys], context -> [batch, 1, d_feature]
-        context = torch.bmm(attention, value)
+        context = attention @ value
         return context.squeeze(1), attention.squeeze(1)
 
     def prob_normalize(self, score, mask):
